@@ -3,16 +3,34 @@ import Flutter
 
 public class NfcManagerPlugin: NSObject, FlutterPlugin, HostApiPigeon {
   private let flutterApi: FlutterApiPigeon
+  private let binaryMessenger: FlutterBinaryMessenger
   private var shouldInvalidateSessionAfterFirstRead: Bool = true
   private var tagSession: NFCTagReaderSession? = nil
   private var vasSession: NFCVASReaderSession? = nil
   private var cachedTags: [String : NFCNDEFTag] = [:]
+  
+  // Reusable channels for better performance
+  private lazy var tagSessionActiveChannel: FlutterBasicMessageChannel = {
+    let channelName = "dev.flutter.pigeon.nfc_manager.FlutterApiPigeon.tagSessionDidBecomeActive"
+    return FlutterBasicMessageChannel(name: channelName, binaryMessenger: binaryMessenger, codec: flutterApi.codec)
+  }()
+  
+  private lazy var tagSessionErrorChannel: FlutterBasicMessageChannel = {
+    let channelName = "dev.flutter.pigeon.nfc_manager.FlutterApiPigeon.tagSessionDidInvalidateWithError"
+    return FlutterBasicMessageChannel(name: channelName, binaryMessenger: binaryMessenger, codec: flutterApi.codec)
+  }()
+  
+  private lazy var tagSessionDetectChannel: FlutterBasicMessageChannel = {
+    let channelName = "dev.flutter.pigeon.nfc_manager.FlutterApiPigeon.tagSessionDidDetect"
+    return FlutterBasicMessageChannel(name: channelName, binaryMessenger: binaryMessenger, codec: flutterApi.codec)
+  }()
 
   public static func register(with registrar: FlutterPluginRegistrar) {
     HostApiPigeonSetup.setUp(binaryMessenger: registrar.messenger(), api: NfcManagerPlugin(binaryMessenger: registrar.messenger()))
   }
 
   private init(binaryMessenger: FlutterBinaryMessenger) {
+    self.binaryMessenger = binaryMessenger
     flutterApi = FlutterApiPigeon(binaryMessenger: binaryMessenger)
   }
 
@@ -390,8 +408,8 @@ public class NfcManagerPlugin: NSObject, FlutterPlugin, HostApiPigeon {
 
 extension NfcManagerPlugin: NFCTagReaderSessionDelegate {
   public func tagReaderSessionDidBecomeActive(_ session: NFCTagReaderSession) {
-    DispatchQueue.main.sync {
-      flutterApi.tagSessionDidBecomeActive { _ in /* no op */ }
+    DispatchQueue.main.async {
+      self.tagSessionActiveChannel.sendMessage(nil) { _ in /* no op */ }
     }
   }
 
@@ -400,8 +418,8 @@ extension NfcManagerPlugin: NFCTagReaderSessionDelegate {
       code: convert((error as! NFCReaderError).code),
       message: error.localizedDescription
     )
-    DispatchQueue.main.sync {
-      flutterApi.tagSessionDidInvalidateWithError(error: pigeonError) { _ in /* no op */ }
+    DispatchQueue.main.async {
+      self.tagSessionErrorChannel.sendMessage([pigeonError] as [Any?]) { _ in /* no op */ }
     }
   }
 
@@ -426,8 +444,8 @@ extension NfcManagerPlugin: NFCTagReaderSessionDelegate {
           return
         }
         self.cachedTags[pigeon.handle] = tag
-        DispatchQueue.main.sync {
-          self.flutterApi.tagSessionDidDetect(tag: pigeon) { _ in /* no op */ }
+        DispatchQueue.main.async {
+          self.tagSessionDetectChannel.sendMessage([pigeon] as [Any?]) { _ in /* no op */ }
         }
         if !self.shouldInvalidateSessionAfterFirstRead { session.restartPolling() }
       }
